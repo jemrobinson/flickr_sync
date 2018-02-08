@@ -1,11 +1,12 @@
 #! /usr/bin/env python
 import argparse
+import ConfigParser
 import flickrapi
 import os
-import time
-import PIL.Image
+import pickle
 import PIL.ExifTags
-import ConfigParser
+import PIL.Image
+import time
 
 POST_INTERVAL = 0.1
 
@@ -36,24 +37,27 @@ def getLocalPhotos(PHOTO_FOLDER):
 
 
 def getRemotePhotos():
-    """! Get metadata for remote photos."""
+    """! Check metadata for remote photos."""
     images = {}
     nPhotos = int(flickr.people.getPhotos(user_id="me")["photos"]["total"])
-    NPERPAGE = 500
+    nPerPage = 500
+    nPages = (nPhotos / nPerPage) + 1
     print "Checking {} remote photos".format(nPhotos)
     # Get photos page-by-page
-    nPages = (nPhotos / NPERPAGE) + 1
     for page in range(1, nPages + 1):
         print "... requesting page {} / {}".format(page, nPages)
-        remote_photos = flickr.people.getPhotos(user_id="me", page=page, per_page=NPERPAGE)
+        remote_photos = flickr.people.getPhotos(user_id="me", page=page, per_page=nPerPage)
         for photo in remote_photos["photos"]["photo"]:
-            photo_info = flickr.photos.getInfo(photo_id=photo["id"])
-            name = photo["title"]
-            if name in images.keys() and photo_info["photo"]["dates"]["taken"] == images[name].taken:
-                print "  ... found duplicate uploads named '{}' (removing instance with id={})".format(name, photo["id"])
-                flickr.photos.delete(photo_id=photo["id"])
-                continue
-            images[name] = Photo(unique_id=photo["id"], taken=photo_info["photo"]["dates"]["taken"], modified=photo_info["photo"]["dates"]["lastupdate"])
+            try:
+                photo_info = flickr.photos.getInfo(photo_id=photo["id"])
+                name = photo["title"]
+                if name in images.keys() and photo_info["photo"]["dates"]["taken"] == images[name].taken:
+                    print "  ... found duplicate uploads named '{}' (removing instance with id={})".format(name, photo["id"])
+                    flickr.photos.delete(photo_id=photo["id"])
+                    continue
+                images[name] = Photo(unique_id=photo["id"], taken=photo_info["photo"]["dates"]["taken"], modified=photo_info["photo"]["dates"]["lastupdate"])
+            except flickrapi.exceptions.FlickrError:
+                print "... encountered flickr API error - skipping"
         print "... loaded metadata for {} unique photos".format(len(images))
     return images
 
@@ -110,9 +114,10 @@ def check_EXIF(photos):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Synchronise local folder with Flickr.")
     parser.add_argument("-f", "--folder", action="store", help="Local folder to use (will default to last used otherwise)")
-    parser.add_argument("-e", "--skipEXIF", action="store_true", help="Skip EXIF check on local files")
-    parser.add_argument("-u", "--skipUpload", action="store_true", help="Skip upload of new files")
-    parser.add_argument("-r", "--skipReplace", action="store_true", help="Skip replacement of files which have been updated since upload")
+    parser.add_argument("--checkEXIF", action="store_true", help="Perform EXIF check on local files")
+    parser.add_argument("--skipUpload", action="store_true", help="Skip upload of new files")
+    parser.add_argument("--skipReplace", action="store_true", help="Skip replacement of files which have been updated since upload")
+    parser.add_argument("--useCachedData", action="store_true", help="Skip update of remote repository")
     args = parser.parse_args()
 
     # Create config file if it does not exist
@@ -143,10 +148,16 @@ if __name__ == "__main__":
 
     local_photos = getLocalPhotos(PHOTO_FOLDER)
     print "Found {} existing local photos".format(len(local_photos))
-    if not args.skipEXIF:
+    if args.checkEXIF:
         check_EXIF(local_photos)
 
-    remote_photos = getRemotePhotos()
+    # remote_photos = checkRemotePhotos()
+    if not args.useCachedData:
+        remote_photos = getRemotePhotos()
+        pickle.dump(remote_photos, open(".remote_metadata.cache", "wb"))
+    else:
+        remote_photos = pickle.load(open(".remote_metadata.cache", "rb"))
+
     print "Found {} existing remote photos".format(len(remote_photos))
 
     local_names = set(local_photos.keys())
@@ -165,8 +176,8 @@ if __name__ == "__main__":
     # Check for local modifications
     print "Checking for local modifications to {} previously uploaded photos...".format(len(overlap_names))
     for overlap_name in overlap_names:
-        if local_photos[overlap_name].modified > remote_photos[overlap_name].modified:
-            print "For {}, the local version is newer".format(overlap_name)
+        if int(local_photos[overlap_name].modified) > int(remote_photos[overlap_name].modified):
+            print "... for {}, the local version is newer".format(overlap_name)
             names_to_replace.add(overlap_name)
     print "There are {} files to upload, including {} replacements".format(len(names_to_upload) + len(names_to_replace), len(names_to_replace))
 

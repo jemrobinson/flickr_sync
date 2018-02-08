@@ -1,6 +1,7 @@
 # Local cache files
 flickr.cfg
 oauth-tokens.sqlite
+.remote_metadata.cache
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

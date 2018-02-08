@@ -1,3 +1,7 @@
+# Local cache files
+flickr.cfg
+oauth-tokens.sqlite
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
